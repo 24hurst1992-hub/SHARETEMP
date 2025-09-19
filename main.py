@@ -13,6 +13,7 @@ import argparse
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -40,12 +41,29 @@ def download_file(session, url, dest_dir):
 	dest = dest_dir / local_name
 	if dest.exists():
 		return dest
+	tmp = dest.with_suffix(".part")
+	# If a previous .part exists (from an interrupted download), remove it and start fresh
+	try:
+		if tmp.exists():
+			tmp.unlink()
+	except Exception:
+		# If we can't remove the temp file, continue and let the write fail if needed
+		pass
+
 	with session.get(url, stream=True, timeout=60) as r:
 		r.raise_for_status()
-		tmp = dest.with_suffix(".part")
-		with open(tmp, "wb") as fh:
-			shutil.copyfileobj(r.raw, fh)
-		tmp.rename(dest)
+		try:
+			with open(tmp, "wb") as fh:
+				shutil.copyfileobj(r.raw, fh)
+			tmp.rename(dest)
+		except Exception:
+			# On any error while writing, ensure tmp is removed so future runs start clean
+			try:
+				if tmp.exists():
+					tmp.unlink()
+			except Exception:
+				pass
+			raise
 	return dest
 
 
@@ -55,7 +73,11 @@ def gsutil_cp(local_path: Path, bucket: str, dest_prefix: str, dry_run: bool = F
 	if prefix and not prefix.endswith('/'):
 		prefix = prefix + '/'
 	dest_name = f"{bucket}/{prefix}{local_path.name}"
-	cmd = ["gsutil", "cp", str(local_path), dest_name]
+	# If local_path is a directory, upload recursively with -r
+	if local_path.is_dir():
+		cmd = ["gsutil", "cp", "-r", str(local_path), dest_name]
+	else:
+		cmd = ["gsutil", "cp", str(local_path), dest_name]
 	print("RUN:", " ".join(cmd))
 	if dry_run:
 		return 0
@@ -85,6 +107,8 @@ def parse_args():
 	p.add_argument("--dest-prefix", default="", help="Optional destination prefix inside the bucket (e.g. data/)")
 	p.add_argument("--downloads-dir", default="downloads", help="Local downloads directory")
 	p.add_argument("--dry-run", action="store_true", help="Don't actually call gsutil; just print commands")
+	p.add_argument("--cleanup", action="store_true", help="Remove zip file after successful extraction and upload")
+	p.add_argument("--max-items", type=int, default=0, help="Limit number of files to process (0 = no limit)")
 	return p.parse_args()
 
 
@@ -100,16 +124,56 @@ def main():
 		return 0
 
 	print(f"Found {len(links)} links containing 'export'.")
-	for url in links:
-		try:
-			print("Downloading:", url)
-			local = download_file(session, url, downloads)
-			print("Saved:", local)
-			rc = gsutil_cp(local, args.bucket, args.dest_prefix, dry_run=args.dry_run)
-			if rc != 0:
-				print(f"gsutil failed for {local} (rc={rc})", file=sys.stderr)
-		except Exception as e:
-			print(f"Error processing {url}: {e}", file=sys.stderr)
+	processed = 0
+	try:
+		for url in links:
+			if args.max_items and args.max_items > 0 and processed >= args.max_items:
+				break
+			try:
+				print("Downloading:", url)
+				local = download_file(session, url, downloads)
+				print("Saved:", local)
+				# If the downloaded file is a zip archive, extract into a folder
+				if local.suffix.lower() == '.zip':
+					# Extract CSV files directly into downloads/ (flat), not per-archive folders
+					try:
+						with zipfile.ZipFile(local, 'r') as zf:
+							members = [m for m in zf.namelist() if m.lower().endswith('.csv')]
+							if not members:
+								print(f"No CSV files found in {local}")
+							for member in members:
+								# Normalize path to basename to avoid nested paths inside zips
+								target_name = Path(member).name
+								target_path = downloads / target_name
+								print(f"Extracting {member} -> {target_path}")
+								with zf.open(member) as src, open(target_path, 'wb') as dst:
+									shutil.copyfileobj(src, dst)
+					except zipfile.BadZipFile as e:
+						print(f"Bad zip file {local}: {e}", file=sys.stderr)
+						continue
+					# Upload extracted CSV files individually
+					for csvfile in downloads.glob('*.csv'):
+						rc = gsutil_cp(csvfile, args.bucket, args.dest_prefix, dry_run=args.dry_run)
+						if rc != 0:
+							print(f"gsutil failed for {csvfile} (rc={rc})", file=sys.stderr)
+					# Optionally remove the zip file after successful extraction/upload
+					if args.cleanup:
+						try:
+							local.unlink()
+						except Exception as e:
+							print(f"Failed to remove {local}: {e}", file=sys.stderr)
+				else:
+					rc = gsutil_cp(local, args.bucket, args.dest_prefix, dry_run=args.dry_run)
+					if rc != 0:
+						print(f"gsutil failed for {local} (rc={rc})", file=sys.stderr)
+				processed += 1
+			except Exception as e:
+				print(f"Error processing {url}: {e}", file=sys.stderr)
+				# continue to next link
+				continue
+	except KeyboardInterrupt:
+		print("\nInterrupted by user. Exiting cleanly.")
+		# exit, leaving completed downloads and removing any in-progress .part files will be handled on next run
 
 	return 0
 
