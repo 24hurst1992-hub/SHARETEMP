@@ -102,6 +102,8 @@ def gsutil_cp(local_path: Path, bucket: str, dest_prefix: str, dry_run: bool = F
 
 
 def parse_args():
+	# Default to the user's latest CSV/zip in the workspace; can be overridden on the CLI.
+	default_start_after = "20241203.export.CSV.zip"
 	p = argparse.ArgumentParser(description="Download GDELT export files and upload to GCS via gsutil")
 	p.add_argument("--bucket", required=True, help="gs://bucket-name or gs://bucket-name/path-prefix (bucket required)")
 	p.add_argument("--dest-prefix", default="", help="Optional destination prefix inside the bucket (e.g. data/)")
@@ -109,6 +111,7 @@ def parse_args():
 	p.add_argument("--dry-run", action="store_true", help="Don't actually call gsutil; just print commands")
 	p.add_argument("--cleanup", action="store_true", help="Remove zip file after successful extraction and upload")
 	p.add_argument("--max-items", type=int, default=0, help="Limit number of files to process (0 = no limit)")
+	p.add_argument("--start-after", default=default_start_after, help="Filename (e.g. 20241203.export.CSV.zip). Skip links up to and including this file and start after it.")
 	return p.parse_args()
 
 
@@ -125,8 +128,18 @@ def main():
 
 	print(f"Found {len(links)} links containing 'export'.")
 	processed = 0
+	started = True if not args.start_after else False
 	try:
 		for url in links:
+			# If start-after is provided, skip links until we find that filename
+			if not started:
+				if url.split('/')[-1] == args.start_after:
+					started = True
+					# skip the file that matches start-after, start from next
+					continue
+				else:
+					# still skipping
+					continue
 			if args.max_items and args.max_items > 0 and processed >= args.max_items:
 				break
 			try:

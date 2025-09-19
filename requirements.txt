@@ -1,4 +1,50 @@
 requests>=2.0
-beautifulsoup4>=4.0
 requests>=2.0
 beautifulsoup4>=4.0
+
+# Optional / recommended utilities
+# - tqdm: progress bars for long downloads
+# - python-dateutil: robust date parsing if you later add time filters
+# - google-cloud-storage: optional Python client for direct GCS uploads (alternative to gsutil)
+tqdm>=4.0
+python-dateutil>=2.0
+google-cloud-storage>=2.0
+
+# Note about gsutil / Google Cloud SDK (required to use `gsutil` from the shell)
+# ---------------------------------------------------------------------------
+# gsutil comes bundled with the Google Cloud SDK. On Windows you typically install
+# the Cloud SDK using the Windows installer or via a direct download. Below are
+# convenient links and commands you can use on Windows (PowerShell) or when
+# downloading the installer in advance.
+#
+# Official Cloud SDK download page (Windows installer + instructions):
+#   https://cloud.google.com/sdk/docs/install
+#
+# Direct installer links (Windows x64):
+#   Stable installer (interactive):
+#     https://dl.google.com/dl/cloudsdk/channels/rapid/GoogleCloudSDKInstaller.exe
+#   Standalone ZIP (if you prefer to unpack manually):
+#     https://dl.google.com/dl/cloudsdk/channels/rapid/GoogleCloudSDKx64.zip
+#
+# Example PowerShell commands to download and run the installer (run as Admin):
+#   # Download installer to current folder
+#   Invoke-WebRequest -Uri https://dl.google.com/dl/cloudsdk/channels/rapid/GoogleCloudSDKInstaller.exe -OutFile .\GoogleCloudSDKInstaller.exe
+#   # Run installer (GUI) - follow prompts
+#   Start-Process -FilePath .\GoogleCloudSDKInstaller.exe -Wait
+#
+# If you prefer a non-interactive install, download the ZIP and follow:
+#   # Download ZIP
+#   Invoke-WebRequest -Uri https://dl.google.com/dl/cloudsdk/channels/rapid/GoogleCloudSDKx64.zip -OutFile .\GoogleCloudSDKx64.zip
+#   # Unzip and run install script from the extracted folder (PowerShell example):
+#   Expand-Archive -Path .\GoogleCloudSDKx64.zip -DestinationPath .\gcloud-sdk
+#   .\gcloud-sdk\google-cloud-sdk\install.ps1
+#
+# After installation, open a new shell and run:
+#   gcloud init        # to authenticate and set a default project
+#   gcloud components update
+#   gsutil version -l  # verify gsutil is available
+#
+# If you want to avoid installing gsutil and prefer Python-only uploads,
+# you can use the google-cloud-storage Python client (added above). Example:
+#   pip install google-cloud-storage
+#   # then configure a service account key and set GOOGLE_APPLICATION_CREDENTIALS
